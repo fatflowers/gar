@@ -69,8 +69,11 @@ func toAnthropicSDKParams(req *core.Request) (anthropic.MessageNewParams, error)
 	if toolChoice, ok := toSDKToolChoice(req.ToolChoice); ok {
 		params.ToolChoice = toolChoice
 	}
-	if userID := strings.TrimSpace(req.Metadata["user_id"]); userID != "" {
-		params.Metadata = anthropic.MetadataParam{UserID: anthropic.String(userID)}
+	metadata := req.Metadata
+	if metadata != nil {
+		if userID := strings.TrimSpace(metadata["user_id"]); userID != "" {
+			params.Metadata = anthropic.MetadataParam{UserID: anthropic.String(userID)}
+		}
 	}
 
 	return params, nil

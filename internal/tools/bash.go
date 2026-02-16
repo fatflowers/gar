@@ -6,39 +6,41 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
 
-const (
-	bashToolName          = "bash"
-	defaultBashTimeout    = 30 * time.Second
-	defaultBashOutputSize = 10_000
-)
+const bashToolName = "bash"
 
-// BashTool executes shell commands synchronously with timeout and truncation.
+// BashTool executes shell commands synchronously.
 type BashTool struct {
-	defaultTimeout time.Duration
+	maxOutputLines int
 	maxOutputBytes int
 }
 
 // NewBashTool constructs bash tool with sensible defaults.
 func NewBashTool() BashTool {
 	return BashTool{
-		defaultTimeout: defaultBashTimeout,
-		maxOutputBytes: defaultBashOutputSize,
+		maxOutputLines: defaultMaxLines,
+		maxOutputBytes: defaultMaxBytes,
 	}
 }
 
 func (BashTool) Name() string { return bashToolName }
 
 func (BashTool) Description() string {
-	return "Run a shell command synchronously with timeout and output truncation."
+	return fmt.Sprintf(
+		"Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
+		defaultMaxLines,
+		defaultMaxBytes/1024,
+	)
 }
 
 func (BashTool) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"},"working_dir":{"type":"string"},"timeout_sec":{"type":"integer","minimum":1}},"required":["command"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"label":{"type":"string","description":"Brief description of what this command does (shown to user)"},"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, no default timeout)"}},"required":["label","command"]}`)
 }
 
 func (b BashTool) Execute(ctx context.Context, params json.RawMessage) (Result, error) {
@@ -49,65 +51,147 @@ func (b BashTool) Execute(ctx context.Context, params json.RawMessage) (Result, 
 	}
 
 	var input struct {
+		Label      string `json:"label"`
 		Command    string `json:"command"`
-		WorkingDir string `json:"working_dir"`
-		TimeoutSec int    `json:"timeout_sec"`
+		Timeout    *int   `json:"timeout"`
+		TimeoutSec *int   `json:"timeout_sec"`
 	}
 	if err := decodeParams(params, &input); err != nil {
 		return Result{}, fmt.Errorf("decode bash params: %w", err)
 	}
+
 	command := strings.TrimSpace(input.Command)
 	if command == "" {
 		return Result{}, errors.New("command is required")
 	}
 
-	timeout := b.defaultTimeout
-	if input.TimeoutSec > 0 {
-		timeout = time.Duration(input.TimeoutSec) * time.Second
+	timeoutSeconds := 0
+	if input.Timeout != nil {
+		timeoutSeconds = *input.Timeout
+	} else if input.TimeoutSec != nil {
+		timeoutSeconds = *input.TimeoutSec
 	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	if timeoutSeconds < 0 {
+		return Result{}, errors.New("timeout must be >= 0")
+	}
+
+	runCtx := ctx
+	cancel := func() {}
+	if timeoutSeconds > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	}
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", command)
-	if strings.TrimSpace(input.WorkingDir) != "" {
-		cmd.Dir = input.WorkingDir
-	}
-	out, err := cmd.CombinedOutput()
-	content, truncated := truncateOutput(out, b.maxOutputBytes)
-	details, _ := json.Marshal(map[string]any{
-		"command":     command,
-		"working_dir": input.WorkingDir,
-		"truncated":   truncated,
-	})
+	cmd := shellCommand(runCtx, command)
 
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	output := combineStdoutStderr(stdout.String(), stderr.String())
+
+	truncation := truncateTail(output, truncationOptions{MaxLines: b.maxOutputLines, MaxBytes: b.maxOutputBytes})
+	outputText := truncation.Content
+	if outputText == "" {
+		outputText = "(no output)"
+	}
+
+	detailsPayload := map[string]any{}
+	if truncation.Truncated {
+		detailsPayload["truncation"] = truncation
+
+		if fullOutputPath, err := writeFullOutputToTempFile(output); err == nil {
+			detailsPayload["full_output_path"] = fullOutputPath
+
+			startLine := truncation.TotalLines - truncation.OutputLines + 1
+			endLine := truncation.TotalLines
+			if truncation.LastLinePartial {
+				lastLine := ""
+				lines := strings.Split(output, "\n")
+				if len(lines) > 0 {
+					lastLine = lines[len(lines)-1]
+				}
+				outputText += fmt.Sprintf(
+					"\n\n[Showing last %s of line %d (line is %s). Full output: %s]",
+					formatSize(truncation.OutputBytes),
+					endLine,
+					formatSize(len([]byte(lastLine))),
+					fullOutputPath,
+				)
+			} else if truncation.TruncatedBy == "lines" {
+				outputText += fmt.Sprintf(
+					"\n\n[Showing lines %d-%d of %d. Full output: %s]",
+					startLine,
+					endLine,
+					truncation.TotalLines,
+					fullOutputPath,
+				)
+			} else {
+				outputText += fmt.Sprintf(
+					"\n\n[Showing lines %d-%d of %d (%s limit). Full output: %s]",
+					startLine,
+					endLine,
+					truncation.TotalLines,
+					formatSize(b.maxOutputBytes),
+					fullOutputPath,
+				)
+			}
+		}
+	}
+
+	details, _ := json.Marshal(detailsPayload)
 	result := Result{
-		Content: content,
+		Content: outputText,
 		Display: DisplayData{
 			Type:    "bash_output",
 			Payload: details,
 		},
 	}
 
-	if err == nil {
-		return result, nil
-	}
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-		return result, fmt.Errorf("command timeout after %s", timeout)
+		return result, errors.New(strings.TrimSpace(outputText + fmt.Sprintf("\n\nCommand timed out after %d seconds", timeoutSeconds)))
 	}
-	return result, fmt.Errorf("command failed: %w", err)
+
+	if runErr != nil {
+		exitCode := 1
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		return result, errors.New(strings.TrimSpace(outputText + fmt.Sprintf("\n\nCommand exited with code %d", exitCode)))
+	}
+
+	return result, nil
 }
 
-func truncateOutput(raw []byte, limit int) (string, bool) {
-	if limit <= 0 || len(raw) <= limit {
-		return string(raw), false
+func combineStdoutStderr(stdout, stderr string) string {
+	if stdout == "" {
+		return stderr
 	}
+	if stderr == "" {
+		return stdout
+	}
+	return stdout + "\n" + stderr
+}
 
-	headSize := limit / 2
-	tailSize := limit - headSize
+func writeFullOutputToTempFile(output string) (string, error) {
+	file, err := os.CreateTemp("", "gar-bash-*.log")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
 
-	var buf bytes.Buffer
-	buf.Write(raw[:headSize])
-	buf.WriteString("\n...[truncated]...\n")
-	buf.Write(raw[len(raw)-tailSize:])
-	return buf.String(), true
+	if _, err := file.WriteString(output); err != nil {
+		return "", err
+	}
+	return file.Name(), nil
+}
+
+func shellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/c", command)
+	}
+	return exec.CommandContext(ctx, "/bin/sh", "-c", command)
 }

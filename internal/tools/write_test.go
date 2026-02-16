@@ -12,13 +12,16 @@ import (
 func TestWriteToolWritesFileAndCreatesParent(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "nested", "out.txt")
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "nested", "out.txt")
 
-	tool := NewWriteTool()
-	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"`+path+`","content":"hello"}`))
+	tool := newWriteTool(workspace)
+	got, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"nested/out.txt","content":"hello"}`))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(got.Content, "Successfully wrote 5 bytes") {
+		t.Fatalf("Execute().Content = %q, want success message", got.Content)
 	}
 
 	raw, err := os.ReadFile(path)
@@ -33,9 +36,22 @@ func TestWriteToolWritesFileAndCreatesParent(t *testing.T) {
 func TestWriteToolRequiresPath(t *testing.T) {
 	t.Parallel()
 
-	tool := NewWriteTool()
+	tool := newWriteTool(t.TempDir())
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"content":"x"}`))
 	if err == nil || !strings.Contains(err.Error(), "path") {
 		t.Fatalf("Execute() error = %v, want path validation error", err)
+	}
+}
+
+func TestWriteToolRejectsPathOutsideWorkspace(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+
+	tool := newWriteTool(workspace)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"`+outside+`","content":"x"}`))
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
+		t.Fatalf("Execute() error = %v, want workspace restriction error", err)
 	}
 }

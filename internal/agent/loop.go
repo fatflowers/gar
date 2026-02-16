@@ -59,8 +59,7 @@ func runLoop(
 			req.Messages = append(req.Messages, *assistantMessage)
 		}
 
-		switch terminal.Type {
-		case llm.EventError:
+		if terminal.Type == llm.EventError {
 			// Error terminal was already emitted by provider stream.
 			return true, nil
 		}
@@ -83,15 +82,8 @@ func runLoop(
 				if err != nil {
 					return false, err
 				}
-				req.Messages = append(req.Messages, toolResultMessage)
-				if toolResultMessage.ToolResult != nil {
-					toolResult := *toolResultMessage.ToolResult
-					if err := sendStreamEvent(ctx, out, llm.Event{
-						Type:       llm.EventToolResult,
-						ToolResult: &toolResult,
-					}); err != nil {
-						return false, err
-					}
+				if err := appendAndEmitToolResult(ctx, out, req, toolResultMessage); err != nil {
+					return false, err
 				}
 
 				if err := sendStreamEvent(ctx, out, llm.Event{
@@ -114,13 +106,7 @@ func runLoop(
 						}
 
 						skippedResultMessage := skipToolCall(skippedCall)
-						req.Messages = append(req.Messages, skippedResultMessage)
-
-						skippedResult := *skippedResultMessage.ToolResult
-						if err := sendStreamEvent(ctx, out, llm.Event{
-							Type:       llm.EventToolResult,
-							ToolResult: &skippedResult,
-						}); err != nil {
+						if err := appendAndEmitToolResult(ctx, out, req, skippedResultMessage); err != nil {
 							return false, err
 						}
 
@@ -232,6 +218,24 @@ func sendStreamEvent(ctx context.Context, out chan<- llm.Event, ev llm.Event) er
 	case out <- ev:
 		return nil
 	}
+}
+
+func appendAndEmitToolResult(
+	ctx context.Context,
+	out chan<- llm.Event,
+	req *llm.Request,
+	msg llm.Message,
+) error {
+	req.Messages = append(req.Messages, msg)
+	if msg.ToolResult == nil {
+		return nil
+	}
+
+	toolResult := *msg.ToolResult
+	return sendStreamEvent(ctx, out, llm.Event{
+		Type:       llm.EventToolResult,
+		ToolResult: &toolResult,
+	})
 }
 
 type assistantAccumulator struct {

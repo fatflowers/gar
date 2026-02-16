@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"gar/internal/config"
+	"gar/internal/llm"
 )
 
 func TestBuildProviderFromConfigAnthropic(t *testing.T) {
@@ -41,5 +42,33 @@ func TestBuildProviderFromConfigUnsupportedProvider(t *testing.T) {
 	_, _, err := buildProviderFromConfig(cfg)
 	if !errors.Is(err, errUnsupportedProvider) {
 		t.Fatalf("expected errUnsupportedProvider, got %v", err)
+	}
+}
+
+func TestBuildProviderFromConfigMissingAPIKeyFailsFast(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Provider.Default = "anthropic"
+	cfg.Provider.Anthropic.APIKey = ""
+
+	_, _, err := buildProviderFromConfig(cfg)
+	if !errors.Is(err, llm.ErrMissingAPIKey) {
+		t.Fatalf("expected llm.ErrMissingAPIKey, got %v", err)
+	}
+}
+
+func TestBuildToolRegistryRegistersBuiltins(t *testing.T) {
+	t.Parallel()
+
+	registry, err := buildToolRegistry()
+	if err != nil {
+		t.Fatalf("buildToolRegistry() error = %v", err)
+	}
+
+	for _, name := range []string{"read", "write", "edit", "bash"} {
+		if _, err := registry.Get(name); err != nil {
+			t.Fatalf("registry.Get(%q) error = %v", name, err)
+		}
 	}
 }

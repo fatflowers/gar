@@ -920,7 +920,7 @@ func TestRunSkipsRemainingToolCallsWhenSteeringQueuedAfterTool(t *testing.T) {
 	var sawSkippedResult bool
 	for ev := range stream {
 		if ev.Type == llm.EventToolResult && ev.ToolResult != nil && ev.ToolResult.ToolCallID == "call-2" {
-			if ev.ToolResult.Content == "Skipped due to queued user message." && ev.ToolResult.IsError {
+			if ev.ToolResult.Content == skippedToolCallMessage && ev.ToolResult.IsError {
 				sawSkippedResult = true
 			}
 		}
@@ -966,7 +966,7 @@ func TestRunSkipsRemainingToolCallsWhenSteeringQueuedAfterTool(t *testing.T) {
 	if secondResult == nil {
 		t.Fatalf("missing call-2 tool_result in next turn context")
 	}
-	if !secondResult.IsError || secondResult.Content != "Skipped due to queued user message." {
+	if !secondResult.IsError || secondResult.Content != skippedToolCallMessage {
 		t.Fatalf("call-2 tool_result = %#v, want skipped error result", secondResult)
 	}
 	if got := lastUserText(secondTurn); got != "interrupt" {
