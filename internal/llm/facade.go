@@ -56,6 +56,7 @@ const (
 	EventToolCallStart     = core.EventToolCallStart
 	EventToolCallDelta     = core.EventToolCallDelta
 	EventToolCallEnd       = core.EventToolCallEnd
+	EventToolResult        = core.EventToolResult
 	EventUsage             = core.EventUsage
 	EventDone              = core.EventDone
 	EventError             = core.EventError
@@ -82,7 +83,7 @@ var (
 	// ErrInvalidRequest indicates malformed canonical request payloads.
 	ErrInvalidRequest = core.ErrInvalidRequest
 	// ErrMissingAPIKey indicates missing Anthropic API credentials.
-	ErrMissingAPIKey  = core.ErrMissingAPIKey
+	ErrMissingAPIKey = core.ErrMissingAPIKey
 )
 
 // NewToolSpecFromStruct reflects a Go struct into a normalized tool schema.

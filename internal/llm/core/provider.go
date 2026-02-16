@@ -21,6 +21,7 @@ const (
 	EventToolCallStart     EventType = "tool_call_start"
 	EventToolCallDelta     EventType = "tool_call_delta"
 	EventToolCallEnd       EventType = "tool_call_end"
+	EventToolResult        EventType = "tool_result"
 	EventUsage             EventType = "usage"
 	EventDone              EventType = "done"
 	EventError             EventType = "error"
@@ -97,6 +98,7 @@ type Event struct {
 	ContentBlockStart *ContentBlockStart
 	TextDelta         string
 	ToolCall          *ToolCall
+	ToolResult        *ToolResult
 	ToolCallDelta     string
 	Usage             *Usage
 	Done              *DonePayload

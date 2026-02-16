@@ -25,11 +25,12 @@ func TestEventTypeValues(t *testing.T) {
 		EventToolCallStart,
 		EventToolCallDelta,
 		EventToolCallEnd,
+		EventToolResult,
 		EventUsage,
 		EventDone,
 		EventError,
 	}
-	if len(cases) != 9 {
+	if len(cases) != 10 {
 		t.Fatalf("unexpected event type count: %d", len(cases))
 	}
 }
