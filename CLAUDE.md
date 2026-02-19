@@ -39,8 +39,8 @@ gar's design is inspired by [pi-mono](https://github.com/badlogic/pi-mono), a Ty
 | `packages/ai/src/providers/anthropic.ts` | SSE streaming, tool_use parsing, token tracking | `internal/llm/anthropic.go` |
 | `packages/ai/src/agent/agent-loop.ts` | Core loop: prompt → LLM → tool → repeat | `internal/agent/loop.go` |
 | `packages/agent/src/agent.ts` | Agent state machine, message queuing (steer/followUp), abort | `internal/agent/agent.go` |
-| `packages/coding-agent/src/tools/` | Tool implementations (read/write/edit/bash), output truncation | `internal/tools/` |
-| `packages/coding-agent/src/core/agent-session.ts` | Session management, context building, compaction | `internal/session/session.go` |
+| `packages/coding-agent/src/tools/` | Tool implementations and truncation helpers | `internal/agent/tool/` + `internal/coding-agent/tool/` |
+| `packages/coding-agent/src/core/agent-session.ts` | Session management, context building, compaction | `internal/agent/session/session.go` |
 | `packages/tui/src/` | TUI rendering, differential updates | `internal/tui/` (use BubbleTea instead) |
 
 ### TypeScript → Go Translation Rules
@@ -151,16 +151,15 @@ internal/
 │   ├── provider.go       → Provider interface + Event types
 │   ├── anthropic.go      → Anthropic Claude implementation (SSE streaming)
 │   └── message.go        → Message, Role, ToolCall, Usage types
-├── agent/                → Agent loop core
+├── agent/                → Shared agent runtime
 │   ├── agent.go          → Agent struct, public API (Run, Cancel, State)
 │   ├── loop.go           → Main run loop: prompt → LLM → tool → loop
-│   └── state.go          → AgentState enum (Idle/Streaming/ToolExecuting/Error)
-├── tools/                → Built-in tools
-│   ├── registry.go       → Tool interface + registration
-│   ├── read.go           → ReadFile tool
-│   ├── write.go          → WriteFile tool
-│   ├── edit.go           → EditFile tool (str_replace style)
-│   └── bash.go           → Bash tool (with timeout + output truncation)
+│   ├── state.go          → AgentState enum (Idle/Streaming/ToolExecuting/Error)
+│   ├── session/          → Shared session tree/compaction runtime
+│   └── tool/             → Shared base tools + registry
+├── agentapp/             → Shared app orchestration + slash commands
+├── coding-agent/         → Coding-agent specific composition
+│   └── tool/             → Coding tool bundles and coding-only tools
 ├── tui/                  → BubbleTea TUI layer
 │   ├── app.go            → Root bubbletea.Model, orchestrates all views
 │   ├── chat.go           → Message stream viewport
@@ -178,14 +177,17 @@ internal/
 
 ```
 cmd/gar → internal/tui → internal/agent → internal/llm
-                       → internal/tools
+                       → internal/agent/session
+                       → internal/agent/tool
+                       → internal/agentapp
+                       → internal/coding-agent/tool
                        → internal/session
                        → internal/config
 ```
 
 - `llm/` has ZERO internal dependencies — it is the foundation layer
-- `tools/` depends only on stdlib
-- `agent/` depends on `llm/` and `tools/`
+- `agent/tool/` depends mostly on stdlib and shared model types
+- `agent/` depends on `llm/` and shared tool contracts
 - `tui/` depends on everything else (it is the top-level orchestrator)
 - `config/` has ZERO internal dependencies
 
@@ -236,7 +238,7 @@ type Provider interface {
     Stream(ctx context.Context, req *Request) (<-chan Event, error)
 }
 
-// tools/registry.go
+// agent/tool/registry.go
 type Tool interface {
     Name() string
     Description() string
