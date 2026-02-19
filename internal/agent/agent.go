@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"sync"
 
+	agenttool "gar/internal/agent/tool"
 	"gar/internal/llm"
-	"gar/internal/tools"
 )
 
 const defaultMaxTurns = 50
@@ -50,7 +50,7 @@ var (
 // Config configures Agent creation.
 type Config struct {
 	Provider     llm.Provider
-	ToolRegistry *tools.Registry
+	ToolRegistry *agenttool.Registry
 	MaxTurns     int
 	SteeringMode QueueMode
 	FollowUpMode QueueMode
@@ -59,7 +59,7 @@ type Config struct {
 // Agent orchestrates the model/tool loop and exposes stream events.
 type Agent struct {
 	provider     llm.Provider
-	toolRegistry *tools.Registry
+	toolRegistry *agenttool.Registry
 	maxTurns     int
 	steeringMode QueueMode
 	followUpMode QueueMode

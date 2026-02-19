@@ -39,7 +39,17 @@ func runLoop(
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if len(pendingMessages) > 0 {
-			req.Messages = append(req.Messages, cloneMessages(pendingMessages)...)
+			delivered := cloneMessages(pendingMessages)
+			req.Messages = append(req.Messages, delivered...)
+			for _, deliveredMessage := range delivered {
+				message := cloneMessage(deliveredMessage)
+				if err := sendStreamEvent(ctx, out, llm.Event{
+					Type:    llm.EventQueuedMessage,
+					Message: &message,
+				}); err != nil {
+					return false, err
+				}
+			}
 			pendingMessages = nil
 		}
 

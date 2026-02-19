@@ -1,4 +1,4 @@
-package tools
+package tool
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 const (
 	defaultMaxLines = 2000
 	defaultMaxBytes = 50 * 1024
+	grepMaxLineLen  = 500
 )
 
 type truncationResult struct {
@@ -219,4 +220,16 @@ func reverseStrings(items []string) {
 	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
 		items[left], items[right] = items[right], items[left]
 	}
+}
+
+func truncateLine(line string, maxChars int) (text string, wasTruncated bool) {
+	limit := maxChars
+	if limit <= 0 {
+		limit = grepMaxLineLen
+	}
+	runes := []rune(line)
+	if len(runes) <= limit {
+		return line, false
+	}
+	return string(runes[:limit]) + "... [truncated]", true
 }

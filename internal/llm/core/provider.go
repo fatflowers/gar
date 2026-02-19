@@ -16,6 +16,7 @@ type EventType string
 
 const (
 	EventStart             EventType = "start"
+	EventQueuedMessage     EventType = "queued_message"
 	EventContentBlockStart EventType = "content_block_start"
 	EventTextDelta         EventType = "text_delta"
 	EventToolCallStart     EventType = "tool_call_start"
@@ -95,6 +96,7 @@ type ContentBlockStart struct {
 // Event is the provider-agnostic streaming event.
 type Event struct {
 	Type              EventType
+	Message           *Message
 	ContentBlockStart *ContentBlockStart
 	TextDelta         string
 	ToolCall          *ToolCall

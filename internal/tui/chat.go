@@ -66,6 +66,12 @@ func (m ChatModel) Messages() []ChatMessage {
 	return copied
 }
 
+// Clear removes all buffered chat messages.
+func (m *ChatModel) Clear() {
+	m.messages = nil
+	m.scrollTop = 0
+}
+
 // SetViewportHeight configures the visible line count for chat content.
 func (m *ChatModel) SetViewportHeight(height int) {
 	if height < 0 {

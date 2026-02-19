@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	agenttool "gar/internal/agent/tool"
 	"gar/internal/llm"
-	"gar/internal/tools"
 )
 
 type fakeProvider struct {
@@ -22,7 +22,7 @@ func (p fakeProvider) Stream(ctx context.Context, req *llm.Request) (<-chan llm.
 
 type fakeTool struct {
 	name string
-	run  func(ctx context.Context, params json.RawMessage) (tools.Result, error)
+	run  func(ctx context.Context, params json.RawMessage) (agenttool.Result, error)
 }
 
 func (f fakeTool) Name() string { return f.name }
@@ -31,9 +31,9 @@ func (f fakeTool) Description() string { return "fake tool" }
 
 func (f fakeTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 
-func (f fakeTool) Execute(ctx context.Context, params json.RawMessage) (tools.Result, error) {
+func (f fakeTool) Execute(ctx context.Context, params json.RawMessage) (agenttool.Result, error) {
 	if f.run == nil {
-		return tools.Result{}, nil
+		return agenttool.Result{}, nil
 	}
 	return f.run(ctx, params)
 }
@@ -530,6 +530,72 @@ func TestRunQueuedMessagesSteeringBeforeFollowUp(t *testing.T) {
 	}
 }
 
+func TestRunEmitsQueuedMessageEvents(t *testing.T) {
+	t.Parallel()
+
+	provider := fakeProvider{
+		streamFn: func(ctx context.Context, req *llm.Request) (<-chan llm.Event, error) {
+			_ = ctx
+			_ = req
+			out := make(chan llm.Event, 2)
+			out <- llm.Event{Type: llm.EventStart}
+			out <- llm.Event{
+				Type: llm.EventDone,
+				Done: &llm.DonePayload{Reason: llm.StopReasonStop},
+			}
+			close(out)
+			return out, nil
+		},
+	}
+
+	a, err := New(Config{Provider: provider})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	a.Steer(llm.Message{
+		Role: llm.RoleUser,
+		Content: []llm.ContentBlock{
+			{Type: llm.ContentTypeText, Text: "queued steer"},
+		},
+	})
+
+	stream, err := a.Run(context.Background(), &llm.Request{
+		Model: "claude-sonnet-4-20250514",
+		Messages: []llm.Message{
+			{
+				Role: llm.RoleUser,
+				Content: []llm.ContentBlock{
+					{Type: llm.ContentTypeText, Text: "initial"},
+				},
+			},
+		},
+		MaxTokens: 32,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var queued *llm.Message
+	for ev := range stream {
+		if ev.Type != llm.EventQueuedMessage || ev.Message == nil {
+			continue
+		}
+		msg := *ev.Message
+		queued = &msg
+	}
+
+	if queued == nil {
+		t.Fatalf("expected queued_message event")
+	}
+	if queued.Role != llm.RoleUser {
+		t.Fatalf("queued role = %q, want user", queued.Role)
+	}
+	if len(queued.Content) == 0 || queued.Content[0].Text != "queued steer" {
+		t.Fatalf("queued content = %#v, want queued steer", queued.Content)
+	}
+}
+
 func TestRunQueuedMessagesAllMode(t *testing.T) {
 	t.Parallel()
 
@@ -728,12 +794,12 @@ func TestRunExecutesToolUseAndContinues(t *testing.T) {
 		},
 	}
 
-	registry := tools.NewRegistry()
+	registry := agenttool.NewRegistry()
 	if err := registry.Register(fakeTool{
 		name: "echo",
-		run: func(ctx context.Context, params json.RawMessage) (tools.Result, error) {
+		run: func(ctx context.Context, params json.RawMessage) (agenttool.Result, error) {
 			_ = ctx
-			return tools.Result{Content: `{"echo":"ok"}`}, nil
+			return agenttool.Result{Content: `{"echo":"ok"}`}, nil
 		},
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)
@@ -853,26 +919,26 @@ func TestRunSkipsRemainingToolCallsWhenSteeringQueuedAfterTool(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	secondRan := false
-	registry := tools.NewRegistry()
+	registry := agenttool.NewRegistry()
 	if err := registry.Register(fakeTool{
 		name: "first",
-		run: func(ctx context.Context, params json.RawMessage) (tools.Result, error) {
+		run: func(ctx context.Context, params json.RawMessage) (agenttool.Result, error) {
 			_ = ctx
 			_ = params
 			close(started)
 			<-release
-			return tools.Result{Content: "first-ok"}, nil
+			return agenttool.Result{Content: "first-ok"}, nil
 		},
 	}); err != nil {
 		t.Fatalf("Register(first) error = %v", err)
 	}
 	if err := registry.Register(fakeTool{
 		name: "second",
-		run: func(ctx context.Context, params json.RawMessage) (tools.Result, error) {
+		run: func(ctx context.Context, params json.RawMessage) (agenttool.Result, error) {
 			_ = ctx
 			_ = params
 			secondRan = true
-			return tools.Result{Content: "second-ok"}, nil
+			return agenttool.Result{Content: "second-ok"}, nil
 		},
 	}); err != nil {
 		t.Fatalf("Register(second) error = %v", err)
@@ -1017,15 +1083,15 @@ func TestStateTransitionsToToolExecutingDuringToolCall(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 
-	registry := tools.NewRegistry()
+	registry := agenttool.NewRegistry()
 	if err := registry.Register(fakeTool{
 		name: "slow",
-		run: func(ctx context.Context, params json.RawMessage) (tools.Result, error) {
+		run: func(ctx context.Context, params json.RawMessage) (agenttool.Result, error) {
 			_ = ctx
 			_ = params
 			close(started)
 			<-release
-			return tools.Result{Content: "ok"}, nil
+			return agenttool.Result{Content: "ok"}, nil
 		},
 	}); err != nil {
 		t.Fatalf("Register() error = %v", err)

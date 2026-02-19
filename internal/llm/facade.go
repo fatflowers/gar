@@ -51,6 +51,7 @@ type (
 
 const (
 	EventStart             = core.EventStart
+	EventQueuedMessage     = core.EventQueuedMessage
 	EventContentBlockStart = core.EventContentBlockStart
 	EventTextDelta         = core.EventTextDelta
 	EventToolCallStart     = core.EventToolCallStart

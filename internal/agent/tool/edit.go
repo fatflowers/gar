@@ -1,4 +1,4 @@
-package tools
+package tool
 
 import (
 	"context"
@@ -80,16 +80,24 @@ func (e EditTool) Execute(ctx context.Context, params json.RawMessage) (Result, 
 	if err != nil {
 		return Result{}, fmt.Errorf("read %s: %w", pathArg, err)
 	}
-	content := string(raw)
+	rawContent := string(raw)
+	bom, content := stripBOM(rawContent)
+	originalEnding := detectLineEnding(content)
+	normalizedContent := normalizeToLF(content)
+	normalizedOldText := normalizeToLF(oldText)
+	normalizedNewText := normalizeToLF(newText)
 
-	if !strings.Contains(content, oldText) {
+	match := fuzzyFindText(normalizedContent, normalizedOldText)
+	if !match.Found {
 		return Result{}, fmt.Errorf(
 			"Could not find the exact text in %s. The old text must match exactly including all whitespace and newlines.",
 			pathArg,
 		)
 	}
 
-	occurrences := strings.Count(content, oldText)
+	fuzzyContent := normalizeForFuzzyMatch(normalizedContent)
+	fuzzyOldText := normalizeForFuzzyMatch(normalizedOldText)
+	occurrences := strings.Count(fuzzyContent, fuzzyOldText)
 	if occurrences > 1 {
 		return Result{}, fmt.Errorf(
 			"Found %d occurrences of the text in %s. The text must be unique. Please provide more context to make it unique.",
@@ -98,31 +106,32 @@ func (e EditTool) Execute(ctx context.Context, params json.RawMessage) (Result, 
 		)
 	}
 
-	index := strings.Index(content, oldText)
-	updated := content[:index] + newText + content[index+len(oldText):]
-	if content == updated {
+	baseContent := match.ContentForReplacement
+	updated := baseContent[:match.Index] + normalizedNewText + baseContent[match.Index+match.MatchLength:]
+	if baseContent == updated {
 		return Result{}, fmt.Errorf(
 			"No changes made to %s. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.",
 			pathArg,
 		)
 	}
+	finalContent := bom + restoreLineEndings(updated, originalEnding)
 
 	mode := os.FileMode(0o644)
 	if info, statErr := os.Stat(path); statErr == nil {
 		mode = info.Mode()
 	}
-	if err := os.WriteFile(path, []byte(updated), mode); err != nil {
+	if err := os.WriteFile(path, []byte(finalContent), mode); err != nil {
 		return Result{}, fmt.Errorf("write %s: %w", pathArg, err)
 	}
 
-	diff := generateDiffString(content, updated, 4)
+	diff := generateDiffString(baseContent, updated, 4)
 	details, _ := json.Marshal(map[string]any{"diff": diff})
 	return Result{
 		Content: fmt.Sprintf(
 			"Successfully replaced text in %s. Changed %d characters to %d characters.",
 			pathArg,
-			len(oldText),
-			len(newText),
+			len(normalizedOldText),
+			len(normalizedNewText),
 		),
 		Display: DisplayData{
 			Type:    "edit_result",

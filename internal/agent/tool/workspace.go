@@ -1,4 +1,4 @@
-package tools
+package tool
 
 import (
 	"errors"
@@ -33,8 +33,8 @@ func normalizeWorkspaceRoot(root string) (string, error) {
 }
 
 func resolveWorkspacePath(workspaceRoot, inputPath string, allowCreate bool) (string, error) {
-	rawPath := strings.TrimSpace(inputPath)
-	if rawPath == "" {
+	rawPath := normalizeToolPathInput(inputPath)
+	if strings.TrimSpace(rawPath) == "" {
 		return "", errors.New("path is required")
 	}
 
@@ -57,6 +57,37 @@ func resolveWorkspacePath(workspaceRoot, inputPath string, allowCreate bool) (st
 		return "", fmt.Errorf("%w: %s (workspace: %s)", ErrPathOutsideWorkspace, rawPath, root)
 	}
 	return resolved, nil
+}
+
+func normalizeToolPathInput(path string) string {
+	trimmed := strings.TrimSpace(path)
+	normalizedSpaces := strings.Map(func(r rune) rune {
+		switch r {
+		case '\u00A0', '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006', '\u2007', '\u2008', '\u2009', '\u200A', '\u202F', '\u205F', '\u3000':
+			return ' '
+		default:
+			return r
+		}
+	}, trimmed)
+
+	if strings.HasPrefix(normalizedSpaces, "@") {
+		normalizedSpaces = strings.TrimPrefix(normalizedSpaces, "@")
+	}
+
+	if normalizedSpaces == "~" {
+		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+			return home
+		}
+		return normalizedSpaces
+	}
+
+	if strings.HasPrefix(normalizedSpaces, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+			return filepath.Join(home, strings.TrimPrefix(normalizedSpaces, "~/"))
+		}
+	}
+
+	return normalizedSpaces
 }
 
 func resolvePathWithOptionalMissing(path string, allowCreate bool) (string, error) {

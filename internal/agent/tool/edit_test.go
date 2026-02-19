@@ -1,6 +1,7 @@
-package tools
+package tool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -100,5 +101,57 @@ func TestEditToolRejectsPathOutsideWorkspace(t *testing.T) {
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"`+outside+`","oldText":"foo","newText":"bar"}`))
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
 		t.Fatalf("Execute() error = %v, want workspace restriction error", err)
+	}
+}
+
+func TestEditToolFuzzyMatchesUnicodeQuotes(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "fuzzy.txt")
+	if err := os.WriteFile(path, []byte("title: “hello”\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	tool := newEditTool(workspace)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"fuzzy.txt","oldText":"title: \"hello\"","newText":"title: \"world\""}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(raw), "title: \"world\"") {
+		t.Fatalf("edited content = %q, want normalized replacement", string(raw))
+	}
+}
+
+func TestEditToolPreservesBOMAndCRLF(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "bom-crlf.txt")
+	original := "\uFEFFline1\r\nline2\r\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	tool := newEditTool(workspace)
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"bom-crlf.txt","oldText":"line2\n","newText":"lineX\n"}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.HasPrefix(raw, []byte{0xEF, 0xBB, 0xBF}) {
+		t.Fatalf("edited file missing BOM prefix: %q", string(raw))
+	}
+	if !strings.Contains(string(raw), "\r\nlineX\r\n") {
+		t.Fatalf("edited content = %q, want CRLF-preserved replacement", string(raw))
 	}
 }

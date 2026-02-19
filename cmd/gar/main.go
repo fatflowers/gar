@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"gar/internal/agent"
+	agenttool "gar/internal/agent/tool"
+	codingtool "gar/internal/coding-agent/tool"
 	"gar/internal/config"
 	"gar/internal/llm"
-	"gar/internal/tools"
+	sessionstore "gar/internal/session"
 	"gar/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -68,6 +70,10 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve cwd: %w", err)
 			}
+			store, err := sessionstore.NewStore(sessionstore.DefaultDir(cwd))
+			if err != nil {
+				return fmt.Errorf("create session store: %w", err)
+			}
 
 			app := tui.NewApp(tui.AppConfig{
 				Version:       "v0.1.0",
@@ -79,6 +85,7 @@ func newRootCmd() *cobra.Command {
 				Runner:        ag,
 				MaxTokens:     defaultRunMaxTokens,
 				Tools:         buildToolSpecs(),
+				SessionStore:  store,
 			})
 
 			program := tea.NewProgram(app, tea.WithAltScreen())
@@ -120,8 +127,8 @@ func buildProviderFromConfig(cfg config.Config) (llm.Provider, string, error) {
 	}
 }
 
-func buildToolRegistry() (*tools.Registry, error) {
-	registry := tools.NewRegistry()
+func buildToolRegistry() (*agenttool.Registry, error) {
+	registry := agenttool.NewRegistry()
 	for _, tool := range builtinTools() {
 		if err := registry.Register(tool); err != nil {
 			return nil, fmt.Errorf("register %s: %w", tool.Name(), err)
@@ -144,11 +151,6 @@ func buildToolSpecs() []llm.ToolSpec {
 	return specs
 }
 
-func builtinTools() []tools.Tool {
-	return []tools.Tool{
-		tools.NewReadTool(),
-		tools.NewWriteTool(),
-		tools.NewEditTool(),
-		tools.NewBashTool(),
-	}
+func builtinTools() []agenttool.Tool {
+	return codingtool.NewCodingTools()
 }

@@ -1,4 +1,4 @@
-package tools
+package tool
 
 import (
 	"context"
@@ -91,6 +91,25 @@ func TestReadToolRejectsPathOutsideWorkspace(t *testing.T) {
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"`+outside+`"}`))
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
 		t.Fatalf("Execute() error = %v, want workspace restriction error", err)
+	}
+}
+
+func TestReadToolSupportsAtPrefixedPath(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	tool := newReadTool(workspace)
+	got, err := tool.Execute(context.Background(), json.RawMessage(`{"path":"@main.go"}`))
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got.Content != "package main\n" {
+		t.Fatalf("Execute().Content = %q, want file content", got.Content)
 	}
 }
 
